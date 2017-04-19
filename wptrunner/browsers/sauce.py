@@ -3,8 +3,12 @@
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import os
+import subprocess
 import sys
+import tarfile
+import time
 import urlparse
+from cStringIO import StringIO as CStringIO
 from ConfigParser import SafeConfigParser
 from urlparse import urljoin
 
@@ -16,6 +20,8 @@ from ..executors.executorselenium import (SeleniumTestharnessExecutor,
                                           SeleniumRefTestExecutor)
 
 here = os.path.split(__file__)[0]
+
+sc_process = None
 
 
 __wptrunner__ = {"product": "sauce",
@@ -111,18 +117,61 @@ def env_options():
             "supports_debugger": False}
 
 
+def get(url):
+    """Issue GET request to a given URL and return the response."""
+    resp = requests.get(url, stream=True)
+    resp.raise_for_status()
+    return resp
+
+
+def seekable(fileobj):
+    """Attempt to use file.seek on given file, with fallbacks."""
+    try:
+        fileobj.seek(fileobj.tell())
+    except Exception:
+        return CStringIO(fileobj.read())
+    else:
+        return fileobj
+
+
+def untar(fileobj):
+    """Extract tar archive."""
+    fileobj = seekable(fileobj)
+    with tarfile.open(fileobj=fileobj) as tar_data:
+        tar_data.extractall()
+
+
 def prerun(**kwargs):
+    global sc_process
+
+    sauce_user = kwargs["sauce_user"]
+    sauce_key = kwargs["sauce_key"]
+    sauce_tunnel_id = kwargs["sauce_tunnel_id"]
+    sauce_connect_binary = kwargs.get("sauce_connect_binary")
     sauce_config = get_sauce_config(**kwargs)
     url = urljoin(sauce_config["url"], "hub/status")
+
+    if not sauce_connect_binary:
+        sauce_connect_binary = "./sc-*-linux/bin/sc"
+        sc_url = "https://saucelabs.com/downloads/sc-latest-linux.tar.gz"
+        untar(get(sc_url).raw)
+
+    sc_process = subprocess.Popen(
+        "%s --user=%s --api-key=%s --no-remove-colliding-tunnels --tunnel-identifier=%s --readyfile=./sauce_is_ready --tunnel-domains web-platform.test *.web-platform.test" % (sauce_connect_binary, sauce_user, sauce_key, sauce_tunnel_id),
+        shell=True
+    )
+    while not os.path.exists('./sauce_is_ready') and not sc_process.poll():
+        time.sleep(5)
+
     try:
         tunnel_request = requests.get(url)
     except requests.RequestException as e:
         raise SauceException("Unable to connect to Sauce Labs. Is Sauce Connect Proxy running?")
 
-    sauce_user = kwargs["sauce_user"]
-    sauce_key = kwargs["sauce_key"]
     upload_prerun_exec('edge-prerun.bat', sauce_user, sauce_key)
     upload_prerun_exec('safari-prerun.sh', sauce_user, sauce_key)
+
+    return sc_process
 
 
 def upload_prerun_exec(file_name, sauce_user, sauce_key):
