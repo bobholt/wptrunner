@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import tarfile
+import tempfile
 import time
 import urlparse
 from cStringIO import StringIO as CStringIO
@@ -117,28 +118,11 @@ def env_options():
             "supports_debugger": False}
 
 
-def get(url):
-    """Issue GET request to a given URL and return the response."""
+def get_tar(url, dest):
     resp = requests.get(url, stream=True)
     resp.raise_for_status()
-    return resp
-
-
-def seekable(fileobj):
-    """Attempt to use file.seek on given file, with fallbacks."""
-    try:
-        fileobj.seek(fileobj.tell())
-    except Exception:
-        return CStringIO(fileobj.read())
-    else:
-        return fileobj
-
-
-def untar(fileobj):
-    """Extract tar archive."""
-    fileobj = seekable(fileobj)
-    with tarfile.open(fileobj=fileobj) as tar_data:
-        tar_data.extractall()
+    with tarfile.open(fileobj=CStringIO(resp.raw.read())) as f:
+        f.extractall(path=dest)
 
 
 def prerun(**kwargs):
@@ -152,9 +136,9 @@ def prerun(**kwargs):
     url = urljoin(sauce_config["url"], "hub/status")
 
     if not sauce_connect_binary:
-        sauce_connect_binary = "./sc-*-linux/bin/sc"
-        sc_url = "https://saucelabs.com/downloads/sc-latest-linux.tar.gz"
-        untar(get(sc_url).raw)
+        temp_path = tempfile.gettempdir()
+        get_tar("https://saucelabs.com/downloads/sc-latest-linux.tar.gz", temp_path)
+        sauce_connect_binary = os.path.join(temp_path, "sc-*-linux/bin/sc")
 
     sc_process = subprocess.Popen(
         "%s --user=%s --api-key=%s --no-remove-colliding-tunnels --tunnel-identifier=%s --readyfile=./sauce_is_ready --tunnel-domains web-platform.test *.web-platform.test" % (sauce_connect_binary, sauce_user, sauce_key, sauce_tunnel_id),
@@ -163,10 +147,13 @@ def prerun(**kwargs):
     while not os.path.exists('./sauce_is_ready') and not sc_process.poll():
         time.sleep(5)
 
+    if sc_process.returncode > 0:
+        raise SauceException("Unable to start Sauce Connect Proxy. Process exited with code %s", sc_process.returncode)
+
     try:
         tunnel_request = requests.get(url)
     except requests.RequestException as e:
-        raise SauceException("Unable to connect to Sauce Labs. Is Sauce Connect Proxy running?")
+        raise SauceException("Unable to connect to Sauce Labs webdriver server.")
 
     upload_prerun_exec('edge-prerun.bat', sauce_user, sauce_key)
     upload_prerun_exec('safari-prerun.sh', sauce_user, sauce_key)
