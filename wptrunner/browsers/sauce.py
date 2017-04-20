@@ -155,7 +155,7 @@ def prerun(**kwargs):
     while not os.path.exists('./sauce_is_ready') and not sc_process.poll():
         time.sleep(5)
 
-    if sc_process.returncode > 0:
+    if sc_process.returncode is not None and sc_process.returncode > 0:
         raise SauceException("Unable to start Sauce Connect Proxy. Process exited with code %s", sc_process.returncode)
 
     try:
