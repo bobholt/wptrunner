@@ -2,6 +2,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
+import glob
 import os
 import subprocess
 import sys
@@ -138,12 +139,19 @@ def prerun(**kwargs):
     if not sauce_connect_binary:
         temp_path = tempfile.gettempdir()
         get_tar("https://saucelabs.com/downloads/sc-latest-linux.tar.gz", temp_path)
-        sauce_connect_binary = os.path.join(temp_path, "sc-*-linux/bin/sc")
+        sauce_connect_binary = glob.glob(os.path.join(temp_path, "sc-*-linux/bin/sc"))[0]
 
-    sc_process = subprocess.Popen(
-        "%s --user=%s --api-key=%s --no-remove-colliding-tunnels --tunnel-identifier=%s --readyfile=./sauce_is_ready --tunnel-domains web-platform.test *.web-platform.test" % (sauce_connect_binary, sauce_user, sauce_key, sauce_tunnel_id),
-        shell=True
-    )
+    sc_process = subprocess.Popen([
+        sauce_connect_binary,
+        "--user=%s" % sauce_user,
+        "--api-key=%s" % sauce_key,
+        "--no-remove-colliding-tunnels",
+        "--tunnel-identifier=%s" % sauce_tunnel_id,
+        "--readyfile=./sauce_is_ready",
+        "--tunnel-domains",
+        "web-platform.test",
+        "*.web-platform.test"
+    ])
     while not os.path.exists('./sauce_is_ready') and not sc_process.poll():
         time.sleep(5)
 
